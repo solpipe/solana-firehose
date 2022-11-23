@@ -1,35 +1,14 @@
 #![allow(clippy::integer_arithmetic)]
 
 use serde_json::json;
+//use solana_geyser_plugin_firehose::geyser_plugin_firehose::GeyserPluginFirehoseConfig;
 
-/// Integration testing for the PostgreSQL plugin
-/// This requires a PostgreSQL database named 'solana' be setup at localhost at port 5432
-/// This is automatically setup in the CI environment.
-/// To setup manually on Ubuntu Linux, do the following,
-/// sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-/// wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
-/// apt install -y postgresql-14
-/// sudo /etc/init.d/postgresql start
-///
-/// sudo -u postgres psql --command "CREATE USER solana WITH SUPERUSER PASSWORD 'solana';"
-/// sudo -u postgres createdb -O solana solana
-/// PGPASSWORD=solana psql -U solana -p 5432 -h localhost -w -d solana -f scripts/create_schema.sql
-///
-/// The test will cover transmitting accounts, transaction and slot,
-/// block metadata.
-///
-/// To clean up the database: run the following, otherwise you may run into duplicate key violations:
-/// PGPASSWORD=solana psql -U solana -p 5432 -h localhost -w -d solana -f scripts/drop_schema.sql
-///
-/// Before running 'cargo test', please run 'cargo build'
+
 use {
     libloading::Library,
     log::*,
     serial_test::serial,
     solana_core::validator::ValidatorConfig,
-    solana_geyser_plugin_postgres::{
-        geyser_plugin_postgres::GeyserPluginPostgresConfig, postgres_client::SimplePostgresClient,
-    },
     solana_local_cluster::{
         cluster::Cluster,
         local_cluster::{ClusterConfig, LocalCluster},
@@ -130,9 +109,9 @@ fn generate_geyser_plugin_config() -> (TempDir, PathBuf) {
     // as the framework is looking for the library relative to the
     // config file otherwise.
     let lib_name = if std::env::consts::OS == "macos" {
-        "libsolana_geyser_plugin_postgres.dylib"
+        "libsolana_geyser_plugin_firehose.dylib"
     } else {
-        "libsolana_geyser_plugin_postgres.so"
+        "libsolana_geyser_plugin_firehose.so"
     };
 
     let mut lib_path = path.clone();
@@ -147,6 +126,7 @@ fn generate_geyser_plugin_config() -> (TempDir, PathBuf) {
     let lib_path = lib_path.as_os_str().to_str().unwrap();
     let config_content = json!({
         "libpath": lib_path,
+        "directory":"/tmp/x",
         "connection_str": "host=localhost user=solana password=solana port=5432",
         "threads": 20,
         "batch_size": 20,
@@ -242,13 +222,12 @@ fn test_without_plugin() {
 
 #[test]
 #[serial]
-fn test_postgres_plugin() {
+fn test_firehose_plugin() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-
     unsafe {
         let filename = match std::env::consts::OS {
-            "macos" => "libsolana_geyser_plugin_postgres.dylib",
-            _ => "libsolana_geyser_plugin_postgres.so",
+            "macos" => "libsolana_geyser_plugin_firehose.dylib",
+            _ => "libsolana_geyser_plugin_firehose.so",
         };
 
         let lib = Library::new(filename);
@@ -277,13 +256,8 @@ fn test_postgres_plugin() {
     .unwrap();
     let mut contents = String::new();
     file.read_to_string(&mut contents).unwrap();
-    let plugin_config: GeyserPluginPostgresConfig = serde_json::from_str(&contents).unwrap();
+    //let plugin_config: GeyserPluginFirehoseConfig = serde_json::from_str(&contents).unwrap();
 
-    let result = SimplePostgresClient::connect_to_db(&plugin_config);
-    if result.is_err() {
-        info!("Failed to connecto the PostgreSQL database. Please setup the database to run the integration tests. {:?}", result.err());
-        return;
-    }
 
     let stake = 10_000;
     let mut config = ClusterConfig {
