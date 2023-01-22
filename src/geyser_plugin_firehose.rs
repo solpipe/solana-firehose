@@ -3,7 +3,7 @@
 
 
 use crate::server::{
-    FirehosePipe, start_firehose,
+    FirehosePipe, start_firehose, Manager,
 };
 
 /// Main entry for the Firehose plugin
@@ -24,12 +24,11 @@ use {
         fs::File, io::Read,
         str,
         sync::{
-            mpsc::{self, Sender, Receiver},
             Mutex, 
             Arc,
         },
     },
-    
+    tokio::runtime::Builder,
 };
 
 #[derive(Default)]
@@ -39,7 +38,7 @@ pub struct GeyserPluginFirehose {
     transaction_selector: Option<TransactionSelector>,
     batch_starting_slot: Option<u64>,
     pipe: Option<FirehosePipe>,
-    closer: Option<Arc<Mutex<Sender<i32>>>>,
+    manager: Option<Manager>,
 }
 
 impl std::fmt::Debug for GeyserPluginFirehose {
@@ -79,6 +78,7 @@ impl GeyserPlugin for GeyserPluginFirehose {
 
     fn on_load(&mut self, config_file: &str) -> Result<()> {
         solana_logger::setup_with_default("info");
+        
         info!(
             "Loading plugin {:?} from config_file {:?}",
             self.name(),
@@ -106,15 +106,11 @@ impl GeyserPlugin for GeyserPluginFirehose {
         if config.grpc_listen_url.is_none(){
             return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no directory".to_string() }.into()))
         }
+        let builder = Builder::new_current_thread()
+            .enable_all()
+            .build()?;
 
-        let router = start_firehose()?;
-        //let r_addr: SocketAddr = config.grpc_listen_url.unwrap().parse()?;
-        let (tx, rx): (Sender<i32>, Receiver<i32>)=mpsc::channel();
-        let _r_on=router.serve_with_shutdown(
-            config.grpc_listen_url.unwrap().parse().unwrap(),
-            async { let _ = rx.recv(); },
-        );
-        self.closer=Some(Arc::new(Mutex::new(tx)));
+        self.manager=Some(start_firehose(config.grpc_listen_url.unwrap(),builder)?);
      
         Ok(())
     }
@@ -122,16 +118,19 @@ impl GeyserPlugin for GeyserPluginFirehose {
     fn on_unload(&mut self) {
         info!("Unloading plugin: {:?}", self.name());
         
-        let can_close = self.closer.is_none();
-        if !can_close {
+        let has_mgr = self.manager.is_some();
+        if !has_mgr {
             return
         }
-        let tx = self.closer.as_ref().unwrap().clone();
-        let r_tx = tx.lock();
-        if !r_tx.is_err(){
+        let mgr=self.manager.as_ref().unwrap();
+
+        let r_tx = mgr.tx.lock();
+        if r_tx.is_err(){
             return
         }
-        let _result = r_tx.unwrap().send(0);
+        let tx=r_tx.unwrap();
+
+        let _result = tx.send(0);
         
         return
     }
