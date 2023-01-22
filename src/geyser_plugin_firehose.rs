@@ -41,6 +41,8 @@ pub struct GeyserPluginFirehose {
     manager: Option<Manager>,
 }
 
+
+
 impl std::fmt::Debug for GeyserPluginFirehose {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Ok(())
@@ -162,7 +164,7 @@ impl GeyserPlugin for GeyserPluginFirehose {
             return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::LockNotAcquired.into()))
         }
         
-        mgr.insert_account(&proto_account)?;
+        mgr.account_insert(&proto_account)?;
 
         Ok(())
     }

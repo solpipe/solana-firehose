@@ -60,7 +60,7 @@ pub fn start_firehose(grpc_listen_url: String, rt: Arc<Mutex<Runtime>>)->Result<
 
 pub struct FirehosePipe{
     index: Arc<Mutex<u16>>,
-    mgr: Manager,
+    pub mgr: Manager,
 }
 
 impl FirehosePipe{

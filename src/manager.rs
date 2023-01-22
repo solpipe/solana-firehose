@@ -3,7 +3,7 @@ use std::{sync::Mutex, clone, thread::sleep, time::Duration};
 use solana_geyser_plugin_interface::geyser_plugin_interface::GeyserPluginError;
 use tokio::sync::{mpsc::{self, channel, Receiver, Sender}, RwLock, broadcast};
 
-use crate::{geyser_plugin_firehose::GeyserPluginFirehoseError, pipe::Account};
+use crate::{geyser_plugin_firehose::GeyserPluginFirehoseError, pipe::{Account, self}};
 
 use {
     std::{
@@ -70,7 +70,7 @@ impl Manager{
         }
     }
     
-    pub fn insert_account(&self,account: &Account)->Result<()>{
+    pub fn account_insert(&self,account: &Account)->Result<()>{
         
         let r = self.spots.as_ref().try_read();
         if r.is_err(){
@@ -92,9 +92,32 @@ impl Manager{
         Ok(())
     }
 
+    pub async fn account_read(&self,i: i32)->Result<pipe::Account>{
+        let r = self.spots.as_ref().read().await;
+        
+        let list = r;
+        match list.get(i as usize){
+            Some(r_spot) => {
+                let spot = r_spot.as_ref().read().await;
+                match &spot.buf{
+                    Some(a) => {
+                        Ok(a.clone())
+                    },
+                    None => {
+                        Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::LockNotAcquired.into()))        
+                    },
+                }
+            },
+            None => {
+                Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::LockNotAcquired.into()))
+            },
+        }
+        
+    }
+    
 
-    pub fn subscribe(&self)->broadcast::Sender<i32>{
-        return self.update_c.clone()
+    pub fn subscribe(&self)->broadcast::Receiver<i32>{
+        return self.update_c.subscribe()
     }
 }
 
