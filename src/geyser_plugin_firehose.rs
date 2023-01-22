@@ -1,5 +1,9 @@
-use crate::shm::{
-    FirehosePipe,
+
+
+
+
+use crate::server::{
+    FirehosePipe, start_firehose,
 };
 
 /// Main entry for the Firehose plugin
@@ -8,7 +12,6 @@ use {
         accounts_selector::AccountsSelector,
         transaction_selector::TransactionSelector,
     },
-    bs58,
     log::*,
     serde_derive::{Deserialize, Serialize},
     serde_json,
@@ -16,13 +19,17 @@ use {
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfoVersions, ReplicaBlockInfoVersions,
         ReplicaTransactionInfoVersions, Result, SlotStatus,
     },
-    solana_measure::measure::Measure,
-    solana_metrics::*,
     thiserror::Error,
     std::{
         fs::File, io::Read,
         str,
+        sync::{
+            mpsc::{self, Sender, Receiver},
+            Mutex, 
+            Arc,
+        },
     },
+    
 };
 
 #[derive(Default)]
@@ -32,6 +39,7 @@ pub struct GeyserPluginFirehose {
     transaction_selector: Option<TransactionSelector>,
     batch_starting_slot: Option<u64>,
     pipe: Option<FirehosePipe>,
+    closer: Option<Arc<Mutex<Sender<i32>>>>,
 }
 
 impl std::fmt::Debug for GeyserPluginFirehose {
@@ -44,7 +52,7 @@ impl std::fmt::Debug for GeyserPluginFirehose {
 /// The Configuration for the Firehose plugin
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GeyserPluginFirehoseConfig {
-    pub directory: Option<String>,
+    pub grpc_listen_url: Option<String>,
 }
 
 
@@ -93,21 +101,39 @@ impl GeyserPlugin for GeyserPluginFirehose {
                     ),
                 }
             })?;
-        info!("directory: {:?}",config.directory);
+        info!("directory: {:?}",config.grpc_listen_url);
 
-        if config.directory.is_some(){
-            self.pipe=Some(FirehosePipe::new(config.directory.unwrap(),10)?);
-        } else {
+        if config.grpc_listen_url.is_none(){
             return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no directory".to_string() }.into()))
         }
 
-        
-
+        let router = start_firehose()?;
+        //let r_addr: SocketAddr = config.grpc_listen_url.unwrap().parse()?;
+        let (tx, rx): (Sender<i32>, Receiver<i32>)=mpsc::channel();
+        let _r_on=router.serve_with_shutdown(
+            config.grpc_listen_url.unwrap().parse().unwrap(),
+            async { let _ = rx.recv(); },
+        );
+        self.closer=Some(Arc::new(Mutex::new(tx)));
+     
         Ok(())
     }
 
     fn on_unload(&mut self) {
         info!("Unloading plugin: {:?}", self.name());
+        
+        let can_close = self.closer.is_none();
+        if !can_close {
+            return
+        }
+        let tx = self.closer.as_ref().unwrap().clone();
+        let r_tx = tx.lock();
+        if !r_tx.is_err(){
+            return
+        }
+        let _result = r_tx.unwrap().send(0);
+        
+        return
     }
 
     fn update_account(

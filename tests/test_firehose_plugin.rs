@@ -126,7 +126,7 @@ fn generate_geyser_plugin_config() -> (TempDir, PathBuf) {
     let lib_path = lib_path.as_os_str().to_str().unwrap();
     let config_content = json!({
         "libpath": lib_path,
-        "directory":"/tmp/x",
+        "grpc_listen_url":"127.0.0.1:50051",
         "connection_str": "host=localhost user=solana password=solana port=5432",
         "threads": 20,
         "batch_size": 20,

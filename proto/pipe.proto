@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option go_package = "github.com/SolmateDev/go-rust-translator/pipe";
+
+package pipe;
+
+import "proto/basic.proto";
+
+/*
+Imports are not allowed in this directory as this proto is used in a Rust binary.
+*/
+
+service Broadcast {
+    rpc Run(basic.Empty) returns (basic.Empty) {}
+}
+
+
+service Utility{
+    rpc Run(basic.Empty) returns (basic.Empty) {}
+}
+
+
