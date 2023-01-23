@@ -1,12 +1,12 @@
 use std::sync::Mutex;
 
 use solana_geyser_plugin_interface::geyser_plugin_interface::GeyserPluginError;
-use tokio::sync::mpsc;
 use tonic::transport::{Server, server::Router};
+use tokio::sync::mpsc::{self, channel};
 
 use crate::{
     pipe::utility_server::UtilityServer,
-    pipe::broadcast_server::BroadcastServer,
+    pipe::broadcast_server::BroadcastServer, manager::Manager, geyser_plugin_firehose::GeyserPluginFirehoseError,
 };
 
 use {
@@ -20,25 +20,23 @@ use {
     tokio::runtime::Runtime,
 };
 
-pub struct Manager{
-    pub tx: Arc<Mutex<mpsc::Sender<i32>>>,
-}
-
-/*
-let r_addr = grpc_listen_url.parse();
-    if r_addr.is_err(){
-        return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no grpc listen address".to_string() }.into()))
-    } */
 
 
-pub fn start_firehose(grpc_listen_url: String, rt: Runtime)->Result<Manager>{
+
+pub fn start_firehose(grpc_listen_url: String, rt: Arc<Mutex<Runtime>>)->Result<Manager>{
 
     let index=Arc::new(Mutex::new(0));
     let (tx, mut rx)=mpsc::channel::<i32>(1);
     
-    
-    let s_1 = FirehosePipe::new(index.clone())?;
-    let s_2 = FirehosePipe::new(index.clone())?;
+    let mgr=Manager::new(tx);
+    let s_1 = FirehosePipe::new(
+        index.clone(),
+        mgr.clone(),
+    )?;
+    let s_2 = FirehosePipe::new(
+        index.clone(),
+        mgr.clone(),
+    )?;
 
     let utility_service= UtilityServer::new(s_1);
     let broadcast_service=BroadcastServer::new(s_2);
@@ -48,30 +46,34 @@ pub fn start_firehose(grpc_listen_url: String, rt: Runtime)->Result<Manager>{
         .serve_with_shutdown(grpc_listen_url.parse().unwrap(), async move {
             let _x = rx.recv().await;
         });
-    rt.spawn(router);
+    {
+        let rt2 = rt.clone();
+        let x = rt2.as_ref().lock();
+        if x.is_err(){
+            return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::LockNotAcquired.into()));
+        }
+        x.unwrap().spawn(router);
+    }
     
-    Ok(Manager{
-        tx:Arc::new(Mutex::new(tx)),
-    })
+    Ok(mgr)
 }
 
 pub struct FirehosePipe{
     index: Arc<Mutex<u16>>,
+    pub mgr: Manager,
 }
 
 impl FirehosePipe{
-    pub fn new(index: Arc<Mutex<u16>>)->Result<Self>{
+    pub fn new(index: Arc<Mutex<u16>>,mgr: Manager)->Result<Self>{
         
         return Ok(Self{
+            mgr,
             index,
         })
     }
 }
 
 
-pub trait Write{
-    fn try_serialize(&self, writer: &mut dyn std::io::Write) -> anchor_lang::Result<()>;
-}
 
 
 

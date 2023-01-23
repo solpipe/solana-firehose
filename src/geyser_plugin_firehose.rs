@@ -2,9 +2,7 @@
 
 
 
-use crate::server::{
-    FirehosePipe, start_firehose, Manager,
-};
+use crate::firehose::FirehosePipe;
 
 /// Main entry for the Firehose plugin
 use {
@@ -38,7 +36,6 @@ pub struct GeyserPluginFirehose {
     transaction_selector: Option<TransactionSelector>,
     batch_starting_slot: Option<u64>,
     pipe: Option<FirehosePipe>,
-    manager: Option<Manager>,
 }
 
 impl std::fmt::Debug for GeyserPluginFirehose {
@@ -51,7 +48,7 @@ impl std::fmt::Debug for GeyserPluginFirehose {
 /// The Configuration for the Firehose plugin
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GeyserPluginFirehoseConfig {
-    pub grpc_listen_url: Option<String>,
+    pub directory: Option<String>,
 }
 
 
@@ -101,36 +98,22 @@ impl GeyserPlugin for GeyserPluginFirehose {
                     ),
                 }
             })?;
-        info!("directory: {:?}",config.grpc_listen_url);
+        info!("directory: {:?}",config.directory);
 
-        if config.grpc_listen_url.is_none(){
+        if config.directory.is_none(){
             return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no directory".to_string() }.into()))
         }
-        let builder = Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        self.manager=Some(start_firehose(config.grpc_listen_url.unwrap(),builder)?);
+        self.pipe = Some(FirehosePipe::new(config.directory.unwrap())?);
      
         Ok(())
     }
 
     fn on_unload(&mut self) {
         info!("Unloading plugin: {:?}", self.name());
-        
-        let has_mgr = self.manager.is_some();
-        if !has_mgr {
+        if !self.pipe.is_none(){
             return
         }
-        let mgr=self.manager.as_ref().unwrap();
-
-        let r_tx = mgr.tx.lock();
-        if r_tx.is_err(){
-            return
-        }
-        let tx=r_tx.unwrap();
-
-        let _result = tx.send(0);
+        self.pipe.as_mut().unwrap().shutdown();
         
         return
     }
