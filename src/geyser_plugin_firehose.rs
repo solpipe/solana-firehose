@@ -65,6 +65,12 @@ pub enum GeyserPluginFirehoseError {
 
     #[error("Failed to acquire lock.")]
     LockNotAcquired,
+    #[error("Txn Id already set")]
+    TxnAlreadySet,
+    #[error("Not Writing")]
+    NotWriting,
+    #[error("Failed to serialize")]
+    FailedToSerialize,
 }
 
 
