@@ -33,10 +33,7 @@ pub struct FirehosePipe{
 
 
 
-impl FirehosePipe{
-
-
-    
+impl FirehosePipe{    
     pub fn new(config: FirehosePipeConfiguration)->Result<Self>{
         
         {
