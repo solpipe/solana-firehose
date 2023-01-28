@@ -31,10 +31,6 @@ message Empty{
 message Pubkey{
     bytes data = 1;
 }
-message Signature{
-    bytes data = 1;
-}
-
 
 message Keypair{
     oneof input{

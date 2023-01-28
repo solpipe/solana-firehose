@@ -2,17 +2,17 @@ use {log::*, std::collections::HashSet};
 
 #[derive(Debug)]
 pub(crate) struct AccountsSelector {
-    pub accounts: HashSet<Vec<u8>>,
-    pub owners: HashSet<Vec<u8>>,
-    pub select_all_accounts: bool,
+    pub _accounts: HashSet<Vec<u8>>,
+    pub _owners: HashSet<Vec<u8>>,
+    pub _select_all_accounts: bool,
 }
 
 impl AccountsSelector {
     pub fn default() -> Self {
         AccountsSelector {
-            accounts: HashSet::default(),
-            owners: HashSet::default(),
-            select_all_accounts: true,
+            _accounts: HashSet::default(),
+            _owners: HashSet::default(),
+            _select_all_accounts: true,
         }
     }
 
@@ -25,9 +25,9 @@ impl AccountsSelector {
         let select_all_accounts = accounts.iter().any(|key| key == "*");
         if select_all_accounts {
             return AccountsSelector {
-                accounts: HashSet::default(),
-                owners: HashSet::default(),
-                select_all_accounts,
+                _accounts: HashSet::default(),
+                _owners: HashSet::default(),
+                _select_all_accounts: select_all_accounts,
             };
         }
         let accounts = accounts
@@ -39,20 +39,12 @@ impl AccountsSelector {
             .map(|key| bs58::decode(key).into_vec().unwrap())
             .collect();
         AccountsSelector {
-            accounts,
-            owners,
-            select_all_accounts,
+            _accounts: accounts,
+            _owners: owners,
+            _select_all_accounts: select_all_accounts,
         }
     }
 
-    pub fn is_account_selected(&self, account: &[u8], owner: &[u8]) -> bool {
-        self.select_all_accounts || self.accounts.contains(account) || self.owners.contains(owner)
-    }
-
-    /// Check if any account is of interested at all
-    pub fn is_enabled(&self) -> bool {
-        self.select_all_accounts || !self.accounts.is_empty() || !self.owners.is_empty()
-    }
 }
 
 #[cfg(test)]

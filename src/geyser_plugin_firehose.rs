@@ -2,9 +2,7 @@
 
 
 
-use crate::{server::{
-    FirehosePipe, start_firehose,
-}, manager::Manager, convert::convert_account, pipe};
+use crate::firehose::{FirehosePipe, FirehosePipeConfiguration, abort};
 
 /// Main entry for the Firehose plugin
 use {
@@ -23,25 +21,15 @@ use {
     std::{
         fs::File, io::Read,
         str,
-        sync::{
-            Mutex, 
-            Arc,
-        },
     },
-    tokio::runtime::Builder,
 };
 
 #[derive(Default)]
 pub struct GeyserPluginFirehose {
-    directory: Option<String>,
     accounts_selector: Option<AccountsSelector>,
     transaction_selector: Option<TransactionSelector>,
-    batch_starting_slot: Option<u64>,
     pipe: Option<FirehosePipe>,
-    manager: Option<Manager>,
 }
-
-
 
 impl std::fmt::Debug for GeyserPluginFirehose {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -53,7 +41,9 @@ impl std::fmt::Debug for GeyserPluginFirehose {
 /// The Configuration for the Firehose plugin
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GeyserPluginFirehoseConfig {
-    pub grpc_listen_url: Option<String>,
+    pub account_path: Option<String>,
+    pub slot_path: Option<String>,
+    pub transaction_path: Option<String>,
 }
 
 
@@ -67,18 +57,30 @@ pub enum GeyserPluginFirehoseError {
 
     #[error("Replica account V0.0.1 not supported anymore")]
     ReplicaAccountV001NotSupported,
+    
+    #[error("Initialization failed.")]
+    InitFailed,
+    
+    #[error("Connection failed.")]
+    ConnectionFailed,
 
     #[error("Failed to acquire lock.")]
     LockNotAcquired,
+    
+    #[error("Txn Id already set")]
+    TxnAlreadySet,
 
-    #[error("Failed to serialize.")]
-    SerializationFailure,
+    #[error("Txn Id not set")]
+    TxnNotSet,
+    
+    #[error("Not Writing")]
+    NotWriting,
+    
+    #[error("Failed to serialize")]
+    FailedToSerialize,
 
-    #[error("Manager is missing.")]
-    MissingManager,
-
-    #[error("No more spots.")]
-    SpotsFull,
+    #[error("I/O failure")]
+    IOFailure,
 }
 
 
@@ -103,6 +105,7 @@ impl GeyserPlugin for GeyserPluginFirehose {
         self.accounts_selector = Some(Self::create_accounts_selector_from_config(&result));
         self.transaction_selector = Some(Self::create_transaction_selector_from_config(&result));
 
+        
         let config: GeyserPluginFirehoseConfig =
             serde_json::from_str(&contents).map_err(|err| {
                 GeyserPluginError::ConfigFileReadError {
@@ -112,31 +115,74 @@ impl GeyserPlugin for GeyserPluginFirehose {
                     ),
                 }
             })?;
-        info!("directory: {:?}",config.grpc_listen_url);
+        
+        let account_path = match config.account_path{
+            Some(x) => x,
+            None => {
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no account path".to_string() }.into()))
+            },
+        };
+        let transaction_path = match config.transaction_path{
+            Some(x) => x,
+            None => {
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no transaction path".to_string() }.into()))
+            },
+        };
+        let slot_path = match config.slot_path{
+            Some(x) => x,
+            None => {
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no slot path".to_string() }.into()))
+            },
+        };
+        
+        info!("account path: {:?}",account_path);
+        info!("transaction path: {:?}",transaction_path);
+        info!("slot path: {:?}",slot_path);
 
-        if config.grpc_listen_url.is_none(){
-            return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no directory".to_string() }.into()))
-        }
-        let rt = Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+        
 
-        self.manager=Some(start_firehose(config.grpc_listen_url.unwrap(),Arc::new(Mutex::new(rt)))?);
+        let fh_config = FirehosePipeConfiguration{
+            account_path,transaction_path,slot_path,
+        };
+        self.pipe = Some(FirehosePipe::new(fh_config)?);
+
+        info!("finished loading");
      
         Ok(())
     }
 
     fn on_unload(&mut self) {
         info!("Unloading plugin: {:?}", self.name());
-        
-        let x = self.manager.as_ref();
-        
-        if !x.is_none() {
+        if !self.pipe.is_none(){
             return
         }
-        x.unwrap().clone().shutdown();
-
+        self.pipe.as_mut().unwrap().shutdown();
+        
         return
+    }
+
+    
+
+    fn update_slot_status(
+        &mut self,
+        slot: u64,
+        parent: Option<u64>,
+        status: SlotStatus,
+    ) -> Result<()> {
+        eprintln!("update slot status");
+        let mut pipe = match self.pipe.clone(){
+            Some(x) => x,
+            None => {
+                eprintln!("no pipe - slot");
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no socket path".to_string() }.into()))
+            },
+        };
+        
+        if pipe.on_slot(slot,parent,status).is_err(){
+            abort();
+        }
+
+        Ok(())
     }
 
     fn update_account(
@@ -145,38 +191,22 @@ impl GeyserPlugin for GeyserPluginFirehose {
         slot: u64,
         is_startup: bool,
     ) -> Result<()> {
-        if is_startup{
-            return Ok(())
-        }
-        if self.manager.is_none() {
-            return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::MissingManager.into()))
-        }
-        let mgr = self.manager.as_ref().unwrap();
+        eprintln!("update account");
+        let pipe = match self.pipe.clone(){
+            Some(x) => x,
+            None => {
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no socket path".to_string() }.into()))
+            },
+        };
 
-        if mgr.is_closed(){
-            return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::MissingManager.into()))
+        if pipe.on_account(account, slot, is_startup).is_err(){
+            abort();
         }
-        
-        let proto_account;
-        if let Some(x) = convert_account(account) {
-            proto_account=x;
-        } else {
-            return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::LockNotAcquired.into()))
-        }
-        
-        mgr.account_insert(&proto_account)?;
 
         Ok(())
     }
 
-    fn update_slot_status(
-        &mut self,
-        slot: u64,
-        parent: Option<u64>,
-        status: SlotStatus,
-    ) -> Result<()> {
-        Ok(())
-    }
+    
 
     fn notify_end_of_startup(&mut self) -> Result<()> {
         Ok(())
@@ -187,11 +217,22 @@ impl GeyserPlugin for GeyserPluginFirehose {
         transaction_info: ReplicaTransactionInfoVersions,
         slot: u64,
     ) -> Result<()> {
+        eprintln!("notify transaction");
+        let pipe = match self.pipe.clone(){
+            Some(x) => x,
+            None => {
+                return Err(GeyserPluginError::Custom(GeyserPluginFirehoseError::ConfigurationError { msg: "no socket path".to_string() }.into()))
+            },
+        };
 
+        if pipe.on_transction(transaction_info, slot).is_err(){
+            abort();
+        }
+        
         Ok(())
     }
 
-    fn notify_block_metadata(&mut self, block_info: ReplicaBlockInfoVersions) -> Result<()> {
+    fn notify_block_metadata(&mut self, _block_info: ReplicaBlockInfoVersions) -> Result<()> {
         Ok(())
     }
 
@@ -200,7 +241,7 @@ impl GeyserPlugin for GeyserPluginFirehose {
     }
 
     fn transaction_notifications_enabled(&self) -> bool {
-        return false
+        return true
     }
 }
 
